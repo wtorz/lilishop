@@ -4,7 +4,6 @@ import cn.lili.common.vo.PageVO;
 import cn.lili.modules.search.entity.dos.EsGoodsIndex;
 import cn.lili.modules.search.entity.dos.EsGoodsRelatedInfo;
 import cn.lili.modules.search.entity.dto.EsGoodsSearchDTO;
-import cn.lili.modules.search.entity.dto.HotWordsDTO;
 import org.springframework.data.elasticsearch.core.SearchPage;
 
 import java.util.List;
@@ -41,7 +40,7 @@ public interface EsGoodsSearchService {
      * @param skuIds SkuId列表
      * @return ES商品列表
      */
-    List<EsGoodsIndex> getEsGoodsBySkuIds(List<String> skuIds);
+    List<EsGoodsIndex> getEsGoodsBySkuIds(List<String> skuIds, PageVO pageVo);
 
     /**
      * 根据id获取商品索引

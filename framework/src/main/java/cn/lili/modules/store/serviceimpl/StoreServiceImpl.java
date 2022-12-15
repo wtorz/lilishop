@@ -2,6 +2,8 @@ package cn.lili.modules.store.serviceimpl;
 
 import cn.hutool.core.date.DateTime;
 import cn.hutool.core.text.CharSequenceUtil;
+import cn.lili.cache.Cache;
+import cn.lili.cache.CachePrefix;
 import cn.lili.common.enums.ResultCode;
 import cn.lili.common.exception.ServiceException;
 import cn.lili.common.security.AuthUser;
@@ -9,8 +11,11 @@ import cn.lili.common.security.context.UserContext;
 import cn.lili.common.utils.BeanUtil;
 import cn.lili.common.vo.PageVO;
 import cn.lili.modules.goods.service.GoodsService;
+import cn.lili.modules.member.entity.dos.Clerk;
 import cn.lili.modules.member.entity.dos.Member;
+import cn.lili.modules.member.entity.dto.ClerkAddDTO;
 import cn.lili.modules.member.entity.dto.CollectionDTO;
+import cn.lili.modules.member.service.ClerkService;
 import cn.lili.modules.member.service.MemberService;
 import cn.lili.modules.store.entity.dos.Store;
 import cn.lili.modules.store.entity.dos.StoreDetail;
@@ -32,8 +37,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * 店铺业务层实现
@@ -49,6 +55,12 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
      */
     @Autowired
     private MemberService memberService;
+
+    /**
+     * 店员
+     */
+    @Autowired
+    private ClerkService clerkService;
     /**
      * 商品
      */
@@ -59,6 +71,9 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
      */
     @Autowired
     private StoreDetailService storeDetailService;
+
+    @Autowired
+    private Cache cache;
 
     @Override
     public IPage<StoreVO> findByConditionPage(StoreSearchParams storeSearchParams, PageVO page) {
@@ -145,6 +160,7 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
                 storeDetailService.updateStoreGoodsInfo(store);
             }
         }
+        cache.remove(CachePrefix.STORE.getPrefix() + storeEditDTO.getStoreId());
         return store;
     }
 
@@ -173,6 +189,13 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
             member.setHaveStore(true);
             member.setStoreId(id);
             memberService.updateById(member);
+            //创建店员
+            ClerkAddDTO clerkAddDTO = new ClerkAddDTO();
+            clerkAddDTO.setMemberId(member.getId());
+            clerkAddDTO.setIsSuper(true);
+            clerkAddDTO.setShopkeeper(true);
+            clerkAddDTO.setStoreId(id);
+            clerkService.saveClerk(clerkAddDTO);
             //设定商家的结算日
             storeDetailService.update(new LambdaUpdateWrapper<StoreDetail>()
                     .eq(StoreDetail::getStoreId, id)
@@ -212,10 +235,12 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
     public boolean applyFirstStep(StoreCompanyDTO storeCompanyDTO) {
         //获取当前操作的店铺
         Store store = getStoreByMember();
-        //如果没有申请过店铺，新增店铺
-        if (!Optional.ofNullable(store).isPresent()) {
+
+        //店铺为空，则新增店铺
+        if (store == null) {
             AuthUser authUser = Objects.requireNonNull(UserContext.getCurrentUser());
             Member member = memberService.getById(authUser.getId());
+            //根据会员创建店铺
             store = new Store(member);
             BeanUtil.copyProperties(storeCompanyDTO, store);
             this.save(store);
@@ -224,12 +249,22 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
             BeanUtil.copyProperties(storeCompanyDTO, storeDetail);
             return storeDetailService.save(storeDetail);
         } else {
+
+            //复制参数 修改已存在店铺
             BeanUtil.copyProperties(storeCompanyDTO, store);
             this.updateById(store);
             //判断是否存在店铺详情，如果没有则进行新建，如果存在则进行修改
             StoreDetail storeDetail = storeDetailService.getStoreDetail(store.getId());
-            BeanUtil.copyProperties(storeCompanyDTO, storeDetail);
-            return storeDetailService.updateById(storeDetail);
+            //如果店铺详情为空，则new ，否则复制对象，然后保存即可。
+            if (storeDetail == null) {
+                storeDetail = new StoreDetail();
+                storeDetail.setStoreId(store.getId());
+                BeanUtil.copyProperties(storeCompanyDTO, storeDetail);
+                return storeDetailService.save(storeDetail);
+            } else {
+                BeanUtil.copyProperties(storeCompanyDTO, storeDetail);
+                return storeDetailService.updateById(storeDetail);
+            }
         }
     }
 
@@ -270,18 +305,28 @@ public class StoreServiceImpl extends ServiceImpl<StoreMapper, Store> implements
     }
 
     @Override
-    public void updateStoreGoodsNum(String storeId) {
-        //获取店铺已上架已审核通过商品数量
-        long goodsNum = goodsService.countStoreGoodsNum(storeId);
+    public void updateStoreGoodsNum(String storeId, Long num) {
         //修改店铺商品数量
         this.update(new LambdaUpdateWrapper<Store>()
-                .set(Store::getGoodsNum, goodsNum)
+                .set(Store::getGoodsNum, num)
                 .eq(Store::getId, storeId));
     }
 
     @Override
     public void updateStoreCollectionNum(CollectionDTO collectionDTO) {
         baseMapper.updateCollection(collectionDTO.getId(), collectionDTO.getNum());
+    }
+
+    @Override
+    public void storeToClerk() {
+        //清空店铺信息方便重新导入不会有重复数据
+        clerkService.remove(new LambdaQueryWrapper<Clerk>().eq(Clerk::getShopkeeper,true));
+        List<Clerk> clerkList = new ArrayList<>();
+        //遍历已开启的店铺
+        for (Store store : this.list(new LambdaQueryWrapper<Store>().eq(Store::getDeleteFlag,false).eq(Store::getStoreDisable,StoreStatusEnum.OPEN.name()))) {
+            clerkList.add(new Clerk(store));
+        }
+        clerkService.saveBatch(clerkList);
     }
 
     /**

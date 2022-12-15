@@ -3,6 +3,8 @@ package cn.lili.modules.store.serviceimpl;
 import cn.hutool.core.date.DateTime;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.json.JSONUtil;
+import cn.lili.cache.Cache;
+import cn.lili.cache.CachePrefix;
 import cn.lili.common.properties.RocketmqCustomProperties;
 import cn.lili.common.security.AuthUser;
 import cn.lili.common.security.context.UserContext;
@@ -13,9 +15,7 @@ import cn.lili.modules.goods.service.GoodsService;
 import cn.lili.modules.search.utils.EsIndexUtil;
 import cn.lili.modules.store.entity.dos.Store;
 import cn.lili.modules.store.entity.dos.StoreDetail;
-import cn.lili.modules.store.entity.dto.StoreAfterSaleAddressDTO;
-import cn.lili.modules.store.entity.dto.StoreSettingDTO;
-import cn.lili.modules.store.entity.dto.StoreSettlementDay;
+import cn.lili.modules.store.entity.dto.*;
 import cn.lili.modules.store.entity.vos.StoreBasicInfoVO;
 import cn.lili.modules.store.entity.vos.StoreDetailVO;
 import cn.lili.modules.store.entity.vos.StoreManagementCategoryVO;
@@ -64,9 +64,17 @@ public class StoreDetailServiceImpl extends ServiceImpl<StoreDetailMapper, Store
     @Autowired
     private RocketMQTemplate rocketMQTemplate;
 
+    @Autowired
+    private Cache cache;
+
     @Override
     public StoreDetailVO getStoreDetailVO(String storeId) {
-        return this.baseMapper.getStoreDetail(storeId);
+        StoreDetailVO storeDetailVO = (StoreDetailVO) cache.get(CachePrefix.STORE.getPrefix() + storeId);
+        if (storeDetailVO == null) {
+            storeDetailVO = this.baseMapper.getStoreDetail(storeId);
+            cache.put(CachePrefix.STORE.getPrefix() + storeId, storeDetailVO, 7200L);
+        }
+        return storeDetailVO;
     }
 
     @Override
@@ -126,6 +134,34 @@ public class StoreDetailServiceImpl extends ServiceImpl<StoreDetailMapper, Store
         return this.baseMapper.getSettlementStore(day);
     }
 
+    @Override
+    public StoreDeliverGoodsAddressDTO getStoreDeliverGoodsAddressDto() {
+        String storeId = Objects.requireNonNull(UserContext.getCurrentUser().getStoreId());
+        return this.baseMapper.getStoreDeliverGoodsAddressDto(storeId);
+    }
+
+    @Override
+    public StoreDeliverGoodsAddressDTO getStoreDeliverGoodsAddressDto(String id) {
+        StoreDeliverGoodsAddressDTO storeDeliverGoodsAddressDto = this.baseMapper.getStoreDeliverGoodsAddressDto(id);
+        if(storeDeliverGoodsAddressDto ==null ){
+            storeDeliverGoodsAddressDto = new StoreDeliverGoodsAddressDTO();
+        }
+        return storeDeliverGoodsAddressDto;
+    }
+
+    @Override
+    public boolean editStoreDeliverGoodsAddressDTO(StoreDeliverGoodsAddressDTO storeDeliverGoodsAddressDto) {
+        String storeId = Objects.requireNonNull(UserContext.getCurrentUser().getStoreId());
+        LambdaUpdateWrapper<StoreDetail> lambdaUpdateWrapper = Wrappers.lambdaUpdate();
+        lambdaUpdateWrapper.set(StoreDetail::getSalesConsignorName,storeDeliverGoodsAddressDto.getSalesConsignorName());
+        lambdaUpdateWrapper.set(StoreDetail::getSalesConsignorMobile,storeDeliverGoodsAddressDto.getSalesConsignorMobile());
+        lambdaUpdateWrapper.set(StoreDetail::getSalesConsignorAddressId,storeDeliverGoodsAddressDto.getSalesConsignorAddressId());
+        lambdaUpdateWrapper.set(StoreDetail::getSalesConsignorAddressPath,storeDeliverGoodsAddressDto.getSalesConsignorAddressPath());
+        lambdaUpdateWrapper.set(StoreDetail::getSalesConsignorDetail,storeDeliverGoodsAddressDto.getSalesConsignorDetail());
+        lambdaUpdateWrapper.eq(StoreDetail::getStoreId,storeId);
+        return this.update(lambdaUpdateWrapper);
+    }
+
     /**
      * 修改店铺的结算日
      *
@@ -148,6 +184,7 @@ public class StoreDetailServiceImpl extends ServiceImpl<StoreDetailMapper, Store
         return this.baseMapper.getStoreAfterSaleAddressDTO(storeId);
     }
 
+
     @Override
     public StoreAfterSaleAddressDTO getStoreAfterSaleAddressDTO(String id) {
         StoreAfterSaleAddressDTO storeAfterSaleAddressDTO = this.baseMapper.getStoreAfterSaleAddressDTO(id);
@@ -169,6 +206,7 @@ public class StoreDetailServiceImpl extends ServiceImpl<StoreDetailMapper, Store
         lambdaUpdateWrapper.eq(StoreDetail::getStoreId, storeId);
         return this.update(lambdaUpdateWrapper);
     }
+
 
     @Override
     public boolean updateStockWarning(Integer stockWarning) {
